@@ -21,10 +21,29 @@ def on_unsubscribe(client, userdata, mid, reason_code_list, properties):
     client.disconnect()
 
 
+def on_sign_up(client, userdata, message):
+    msg_str = message.payload.decode("utf-8")
+
+
+def on_data_msg(client, userdata, payload, topic, topic_path):
+    device_id = topic_path[2]
+    pollutant = topic_path[3]
+    dbmanager = db.DBManager()
+    dbmanager.insert_values("DataStream", AQDeviceID=int(device_id),
+                            Pollutant=pollutant, Value=float(payload))
+
+
 def on_message(client, userdata, message):
     # userdata is the structure we choose to provide, here it's a list()
-    print(f"Received the following message: {message.payload.decode("utf-8")} from {message.topic}")
-    tmp_str = message.payload.decode("utf-8")
+    msg_str = message.payload.decode("utf-8")
+    topic_path_list = message.topic.split('/')
+    print(f'RECEIVED MSG: TOPIC = {message.topic} PAYLOAD = {msg_str}')
+    if "airquality/sign" in message.topic:
+        on_sign_up(client, userdata, message)
+    elif "airquality/data" in message.topic:
+        on_data_msg(client, userdata, msg_str, message.topic, topic_path_list)
+    else:
+        print(f"Topic with unknown naming template: payload = {message.payload.decode("utf-8")} from {message.topic}")
     topic_parts_list = message.topic.split("/")
     print(f'{topic_parts_list=}')
     if "airquality/sign" in message.topic:
@@ -82,26 +101,13 @@ def on_connect(client, userdata, flags, reason_code, properties):
     else:
         # we should always subscribe from on_connect callback to be sure
         # our subscribed is persisted across reconnections.
-        client.subscribe("airquality/#")
+        client.subscribe("airquality/#")  # subscribe to all AQ-related MQTT topics
 
 
 def start(host, port=1883, keepalive=60):
-    dbmanager = db.DBManager()
     mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    devices_from_db = dbmanager.get_values("AQDevices", )
     user_data_dict = {"devices": {},
                       "data": {}}
-    for device in devices_from_db:
-        user_data_dict["devices"].update({device["AQDeviceID"]: {}})
-        mqtt_keys_list = ["ID", "NAME", "CITY", "COUNTRY", "COORDINATES"]
-        db_keys_list = ["AQDeviceID", "Name", "City", "Country", ("Latitude", "Longitude")]
-        for (mqtt_entry, db_entry) in zip(mqtt_keys_list, db_keys_list):
-            if mqtt_entry != "COORDINATES":
-                user_data_dict["devices"][device["AQDeviceID"]].update({mqtt_entry: device[db_entry]})
-            else:
-                user_data_dict["devices"][device["AQDeviceID"]].update({mqtt_entry: f'({device[db_entry[0]]}, '
-                                                                                    f'{device[db_entry[1]]})'})
-    print(user_data_dict["devices"])
     mqttc.user_data_set(user_data_dict)
     mqttc.on_connect = on_connect
     mqttc.on_message = on_message
@@ -110,4 +116,3 @@ def start(host, port=1883, keepalive=60):
 
     mqttc.connect(host, port, keepalive)
     mqttc.loop_forever()
-    print(f"Received the following message: {mqttc.user_data_get()}")

@@ -1,6 +1,23 @@
 import sqlite3
 
 
+class DBWorker:
+    def __init__(self, db_path="./data/AQ.db"):
+        """
+        Initializes a new instance of the DBWorker class.
+        :param db_path: The path to the database file.
+        """
+        self.db_path = db_path
+        self.conn = sqlite3.connect(self.db_path)
+        self.cursor = self.conn.cursor()
+        self.conn.row_factory = sqlite3.Row
+        self.conn.close()
+
+
+def create_table(table_name):
+    conn = sqlite3.connect('')
+
+
 def db_routine(func):
     """
     Decorator function to handle database connection and disconnection for the wrapped function.
