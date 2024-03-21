@@ -48,7 +48,7 @@ def select_values(table_name, columns='*', condition='', data=None):
     db_cursor = db_connection.cursor()
     db_cursor.execute(query_str, (data,))
     results = db_cursor.fetchall()
-    print(f'!!!!!!! {results=}')
+    print(f'! db.select_values {results=}')
     db_connection.close()
     return results
 

@@ -22,12 +22,12 @@ def on_unsubscribe(client, userdata, mid, reason_code_list, properties):
     client.disconnect()
 
 
-def on_sign_up(msg_data, device_id):
-    select_result = db.select_values("devices", "name", " WHERE dev_id = ?", device_id)
+def register_sensor(msg_data, sensor_id):
+    select_result = db.select_values("devices", "name", " WHERE dev_id = ?", sensor_id)
     print(f'Selected result: {select_result}')
     if not select_result:
-        db.insert_values("devices", (device_id, msg_data["name"]))
-        db.insert_values("geo_data", (device_id, msg_data["city"], msg_data["country"],
+        db.insert_values("devices", (sensor_id, msg_data["name"]))
+        db.insert_values("geo_data", (sensor_id, msg_data["city"], msg_data["country"],
                                       msg_data["latitude"], msg_data["longitude"]))
 
 
@@ -47,19 +47,15 @@ def on_data_msg(msg_data, device_id):
 def on_message(client, userdata, message):
     # userdata is the structure we choose to provide, here it's a list()
     msg_str = message.payload.decode("utf-8")
+    print(f'RECEIVED MESSAGE | Topic: {message.topic} | Payload: {msg_str}')
     msg_pairs = msg_str.split(';')
-    print(f'{msg_pairs=}')
-    msg_list = [pair.split(' = ') for pair in msg_pairs]
-    print(f'{msg_list=}')
-    msg_data = {pair[0].lower(): pair[1] for pair in msg_list}
+    msg_list = [pair.split('=') for pair in msg_pairs]
+    msg_data = {pair[0]: pair[1] for pair in msg_list}
     topic_path_list = message.topic.split('/')
-    print(f'RECEIVED MSG: TOPIC = {message.topic} PAYLOAD = {msg_str}')
     if "airquality/sign" in message.topic:
         msg_data.update({"latitude": msg_data['coordinates'][1:msg_data['coordinates'].find(", "):],
                          "longitude": msg_data['coordinates'][msg_data['coordinates'].find(", ") + 2:-1:]})
-        print(f'{msg_data=}')
-        print(f'Sign up: {msg_str}')
-        on_sign_up(msg_data, topic_path_list[2])
+        register_sensor(msg_data, topic_path_list[2])
     elif "airquality/data" in message.topic:
         on_data_msg(msg_data, topic_path_list[2])
     else:
