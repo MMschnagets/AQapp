@@ -1,5 +1,6 @@
 import paho.mqtt.client as mqtt
 from data import db
+from data.classes import Device
 
 
 def on_subscribe(client, userdata, mid, reason_code_list, properties):
@@ -21,78 +22,48 @@ def on_unsubscribe(client, userdata, mid, reason_code_list, properties):
     client.disconnect()
 
 
-def on_sign_up(client, userdata, message):
-    msg_str = message.payload.decode("utf-8")
+def on_sign_up(msg_data, device_id):
+    select_result = db.select_values("devices", "name", " WHERE dev_id = ?", device_id)
+    print(f'Selected result: {select_result}')
+    if not select_result:
+        db.insert_values("devices", (device_id, msg_data["name"]))
+        db.insert_values("geo_data", (device_id, msg_data["city"], msg_data["country"],
+                                      msg_data["latitude"], msg_data["longitude"]))
 
 
-def on_data_msg(client, userdata, payload, topic, topic_path):
-    device_id = topic_path[2]
-    pollutant = topic_path[3]
-    dbmanager = db.DBManager()
-    dbmanager.insert_values("DataStream", AQDeviceID=int(device_id),
-                            Pollutant=pollutant, Value=float(payload))
+def on_data_msg(msg_data, device_id):
+    select_result = db.select_values("raw_data", "dev_id", " WHERE dev_id = ?", device_id)
+    msg_data.update({"dev_id": device_id})
+    if not select_result:
+        db.insert_values("raw_data", (msg_data["dev_id"], msg_data["pm25"], msg_data["pm10"],
+                                      msg_data["o3"], msg_data["no2"], msg_data["so2"], msg_data["co"]))
+        print(f'ON DATA MSG: {msg_data=}')
+    else:
+        db.update_values("raw_data", "all", (msg_data["pm25"], msg_data["pm10"],
+                                             msg_data["o3"], msg_data["no2"], msg_data["so2"], msg_data["co"],
+                                             msg_data["dev_id"]))
 
 
 def on_message(client, userdata, message):
     # userdata is the structure we choose to provide, here it's a list()
     msg_str = message.payload.decode("utf-8")
+    msg_pairs = msg_str.split(';')
+    print(f'{msg_pairs=}')
+    msg_list = [pair.split(' = ') for pair in msg_pairs]
+    print(f'{msg_list=}')
+    msg_data = {pair[0].lower(): pair[1] for pair in msg_list}
     topic_path_list = message.topic.split('/')
     print(f'RECEIVED MSG: TOPIC = {message.topic} PAYLOAD = {msg_str}')
     if "airquality/sign" in message.topic:
-        on_sign_up(client, userdata, message)
+        msg_data.update({"latitude": msg_data['coordinates'][1:msg_data['coordinates'].find(", "):],
+                         "longitude": msg_data['coordinates'][msg_data['coordinates'].find(", ") + 2:-1:]})
+        print(f'{msg_data=}')
+        print(f'Sign up: {msg_str}')
+        on_sign_up(msg_data, topic_path_list[2])
     elif "airquality/data" in message.topic:
-        on_data_msg(client, userdata, msg_str, message.topic, topic_path_list)
+        on_data_msg(msg_data, topic_path_list[2])
     else:
         print(f"Topic with unknown naming template: payload = {message.payload.decode("utf-8")} from {message.topic}")
-    topic_parts_list = message.topic.split("/")
-    print(f'{topic_parts_list=}')
-    if "airquality/sign" in message.topic:
-        device_id = topic_parts_list[2]
-        if device_id not in userdata["devices"].keys():
-            userdata["devices"].update({device_id: {}})
-        userdata["devices"][device_id].update({tmp_str[:tmp_str.find(" = "):]: tmp_str[tmp_str.find(" = ") + 3::]})
-        check_list = ["ID", "NAME", "CITY", "COUNTRY", "COORDINATES"]
-        check_value = 0
-        for key in check_list:
-            if key in userdata["devices"][device_id].keys():
-                check_value += 1
-        print(check_value)
-        print(len(check_list))
-        if check_value == len(check_list):
-            dbmanager = db.DBManager()
-            geo_str = userdata["devices"][device_id]["COORDINATES"]
-            devices_from_db = dbmanager.get_values("AQDevices")
-            if int(device_id) in [devices_from_db[i]["AQDeviceID"] for i in range(len(devices_from_db))]:
-                cond_str = f'AQDeviceID = {device_id};'
-                dbmanager.update_values("AQDevices", cond_str,
-                                        Name=f'"{userdata["devices"][device_id]["NAME"]}"',
-                                        City=f'"{userdata["devices"][device_id]["CITY"]}"',
-                                        Country=f'"{userdata["devices"][device_id]["COUNTRY"]}"',
-                                        Latitude=geo_str[1:geo_str.find(","):],
-                                        Longitude=geo_str[geo_str.find(",") + 2:len(geo_str) - 1:],
-                                        Status=f'"Active"')
-                print(f"Device UPDATED: {userdata["devices"][device_id]}")
-            else:
-                dbmanager.insert_values("AQDevices", AQDeviceID=userdata["devices"][device_id]["ID"],
-                                        Name=f'"{userdata["devices"][device_id]["NAME"]}"',
-                                        City=f'"{userdata["devices"][device_id]["CITY"]}"',
-                                        Country=f'"{userdata["devices"][device_id]["COUNTRY"]}"',
-                                        Latitude=geo_str[1:geo_str.find(","):],
-                                        Longitude=geo_str[geo_str.find(",") + 2:len(geo_str) - 1:],
-                                        Status=f'"Active"')
-                print(f"Device INSERTED: {userdata["devices"][device_id]}")
-    elif "airquality/data" in message.topic:
-        device_id = topic_parts_list[2]
-        pollutant = topic_parts_list[3]
-        if device_id not in userdata["data"].keys():
-            userdata["data"].update({device_id: {pollutant: float(tmp_str)}})
-        dbmanager = db.DBManager()
-        dbmanager.insert_values("DataStream", AQDeviceID=int(device_id),
-                                Pollutant=pollutant, Value=float(tmp_str))
-
-    # We only want to process 10 messages
-    elif len(userdata) >= 100000:
-        client.unsubscribe("airquality/#")
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -105,6 +76,10 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 
 def start(host, port=1883, keepalive=60):
+    db_obj = db.DBWorker()
+    db_obj_conn = db_obj.get_db_connection()
+    for table_name in ['devices', 'geo_data', 'raw_data']:
+        db.create_table(table_name)
     mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     user_data_dict = {"devices": {},
                       "data": {}}
@@ -113,6 +88,5 @@ def start(host, port=1883, keepalive=60):
     mqttc.on_message = on_message
     mqttc.on_subscribe = on_subscribe
     mqttc.on_unsubscribe = on_unsubscribe
-
     mqttc.connect(host, port, keepalive)
     mqttc.loop_forever()
